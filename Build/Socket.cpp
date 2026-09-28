@@ -84,6 +84,7 @@ static inline void DO_STARTUP()
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/ioctl.h>
+#include <poll.h>
 #include <unistd.h>
 
 static std::string pfxerr( const char *prefix, const char *serr );
@@ -330,6 +331,7 @@ bool Socket::waitData( uint waitMS ) noexcept(false)
     if( !isValid() )
         return false;
 
+#ifdef WIN32
     int sec = waitMS / 1000,
         ms  = waitMS - 1000 * sec;
 
@@ -342,6 +344,21 @@ bool Socket::waitData( uint waitMS ) noexcept(false)
     FD_SET( m_sock, &readfds );
 
     int ret = select( m_sock + 1, &readfds, 0, 0, &tv );
+#else
+    // poll() rather than select(): FD_SET() on a descriptor >= FD_SETSIZE
+    // (1024) writes past the fd_set, which would corrupt memory.
+    struct pollfd   pfd;
+    pfd.fd      = m_sock;
+    pfd.events  = POLLIN;
+    pfd.revents = 0;
+
+    int ret = poll( &pfd, 1, int(waitMS) );
+
+    if( ret > 0 && (pfd.revents & POLLNVAL) ) {
+        m_error = "waitData: invalid socket";
+        throw std::runtime_error( m_error );
+    }
+#endif
 
 // Ready
     if( ret > 0 )
